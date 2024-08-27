@@ -19,7 +19,7 @@ The Nomad ECS driver plugin supports the following configuration parameters:
 A example client plugin stanza looks like the following:
 
 ```hcl
-plugin "nomad-driver-ecs" {
+plugin "nomad-driver-ray" {
   config {
     enabled = true
     cluster = "nomad-remote-driver-cluster"

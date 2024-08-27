@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
 
 env:
-  PKG_NAME: "nomad-driver-ecs"
+  PKG_NAME: "nomad-driver-ray"
 
 jobs:
   get-go-version:

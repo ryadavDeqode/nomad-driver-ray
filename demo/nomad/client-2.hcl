@@ -17,7 +17,7 @@ ports {
   http = 6656
 }
 
-plugin "nomad-driver-ecs" {
+plugin "nomad-driver-ray" {
   config {
     enabled = true
     cluster = "nomad-remote-driver-demo"

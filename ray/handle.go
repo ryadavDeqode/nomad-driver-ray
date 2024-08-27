@@ -15,18 +15,18 @@ import (
 	"github.com/hashicorp/nomad/plugins/drivers"
 )
 
-// These represent the ECS task terminal lifecycle statuses.
-const (
-	ecsTaskStatusDeactivating   = "DEACTIVATING"
-	ecsTaskStatusStopping       = "STOPPING"
-	ecsTaskStatusDeprovisioning = "DEPROVISIONING"
-	ecsTaskStatusStopped        = "STOPPED"
-)
+// // These represent the ECS task terminal lifecycle statuses.
+// const (
+// 	ecsTaskStatusDeactivating   = "DEACTIVATING"
+// 	ecsTaskStatusStopping       = "STOPPING"
+// 	ecsTaskStatusDeprovisioning = "DEPROVISIONING"
+// 	ecsTaskStatusStopped        = "STOPPED"
+// )
 
 type taskHandle struct {
-	arn       string
+	actor     string
 	logger    hclog.Logger
-	ecsClient ecsClientInterface
+	rayRestInterface rayRestInterface
 
 	totalCpuStats  *stats.CpuStats
 	userCpuStats   *stats.CpuStats
@@ -49,13 +49,13 @@ type taskHandle struct {
 	cancel context.CancelFunc
 }
 
-func newTaskHandle(logger hclog.Logger, ts TaskState, taskConfig *drivers.TaskConfig, ecsClient ecsClientInterface) *taskHandle {
+func newTaskHandle(logger hclog.Logger, ts TaskState, taskConfig *drivers.TaskConfig, rayRestInterface rayRestInterface) *taskHandle {
 	ctx, cancel := context.WithCancel(context.Background())
-	logger = logger.Named("handle").With("arn", ts.ARN)
+	logger = logger.Named("handle").With("actor", ts.Actor)
 
 	h := &taskHandle{
-		arn:        ts.ARN,
-		ecsClient:  ecsClient,
+		actor:      ts.Actor,
+		rayRestInterface:  rayRestInterface,
 		taskConfig: taskConfig,
 		procState:  drivers.TaskStateRunning,
 		startedAt:  ts.StartedAt,
@@ -82,7 +82,7 @@ func (h *taskHandle) TaskStatus() *drivers.TaskStatus {
 		CompletedAt: h.completedAt,
 		ExitResult:  h.exitResult,
 		DriverAttributes: map[string]string{
-			"arn": h.arn,
+			"actor": h.actor,
 		},
 	}
 }
@@ -107,55 +107,36 @@ func (h *taskHandle) run() {
 		h.handleRunError(err, "failed to open task stdout path")
 		return
 	}
-
-	// Run the deferred close in an anonymous routine so we can see any errors.
 	defer func() {
 		if err := f.Close(); err != nil {
 			h.logger.Error("failed to close task stdout handle correctly", "error", err)
 		}
 	}()
 
-	// Block until stopped.
-	for h.ctx.Err() == nil {
-		select {
-		case <-time.After(5 * time.Second):
+	// // Block until stopped, doing nothing in the meantime.
+	// for {
+	// 	select {
+	// 	case <-time.After(5 * time.Second):
+	// 		// Intentionally do nothing here, you can add logs if needed for heartbeat or similar
+	// 		now := time.Now().Format(time.RFC3339)
+	// 		if _, err := fmt.Fprintf(f, "[%s] - task is running but not checking status\n", now); err != nil {
+	// 			h.handleRunError(err, "failed to write to stdout")
+	// 		}
 
-			status, err := h.ecsClient.DescribeTaskStatus(h.ctx, h.arn)
-			if err != nil {
-				h.handleRunError(err, "failed to find ECS task")
-				return
-			}
-
-			// Write the health status before checking what it is ensures the
-			// alloc logs include the health during the ECS tasks terminal
-			// phase.
-			now := time.Now().Format(time.RFC3339)
-			if _, err := fmt.Fprintf(f, "[%s] - client is remotely monitoring ECS task: %v with status %v\n",
-				now, h.arn, status); err != nil {
-				h.handleRunError(err, "failed to write to stdout")
-			}
-
-			// ECS task has terminal status phase, meaning the task is going to
-			// stop. If we are in this phase, the driver should exit and pass
-			// this to the servers so that a new allocation, and ECS task can
-			// be started.
-			if status == ecsTaskStatusDeactivating || status == ecsTaskStatusStopping ||
-				status == ecsTaskStatusDeprovisioning || status == ecsTaskStatusStopped {
-				h.handleRunError(fmt.Errorf("ECS task status in terminal phase"), "task status: "+status)
-				return
-			}
-
-		case <-h.ctx.Done():
-		}
-	}
+	// 	case <-h.ctx.Done():
+	// 		// Handle context cancellation
+	// 		h.logger.Info("task handle received context cancellation")
+	// 		return
+	// 	}
+	// }
 
 	h.stateLock.Lock()
 	defer h.stateLock.Unlock()
 
 	// Only stop task if we're not detaching.
 	if !h.detach {
-		if err := h.stopTask(); err != nil {
-			h.handleRunError(err, "failed to stop ECS task correctly")
+		if err := h.stopTask(); err != nil { // Implement the task stopping based on your REST API, if applicable
+			h.handleRunError(err, "failed to stop task correctly")
 			return
 		}
 	}
@@ -190,25 +171,5 @@ func (h *taskHandle) handleRunError(err error, context string) {
 // stopTask is used to stop the ECS task, and monitor its status until it
 // reaches the stopped state.
 func (h *taskHandle) stopTask() error {
-	if err := h.ecsClient.StopTask(context.TODO(), h.arn); err != nil {
-		return err
-	}
-
-	for {
-		select {
-		case <-time.After(5 * time.Second):
-			status, err := h.ecsClient.DescribeTaskStatus(context.TODO(), h.arn)
-			if err != nil {
-				return err
-			}
-
-			// Check whether the status is in its final state, and log to provide
-			// operator visibility.
-			if status == ecsTaskStatusStopped {
-				h.logger.Info("ecs task has successfully been stopped")
-				return nil
-			}
-			h.logger.Debug("continuing to monitor ecs task shutdown", "status", status)
-		}
-	}
+	return nil
 }

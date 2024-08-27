@@ -8,10 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws/external"
-	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	"github.com/hashicorp/go-hclog"
-	"github.com/hashicorp/nomad-driver-ecs/version"
 	"github.com/hashicorp/nomad/client/structs"
 	"github.com/hashicorp/nomad/drivers/shared/eventer"
 	"github.com/hashicorp/nomad/plugins/base"
@@ -22,7 +19,7 @@ import (
 
 const (
 	// pluginName is the name of the plugin.
-	pluginName = "ecs"
+	pluginName = "rayRest"
 
 	// fingerprintPeriod is the interval at which the driver will send
 	// fingerprint responses.
@@ -39,43 +36,43 @@ var (
 	pluginInfo = &base.PluginInfoResponse{
 		Type:              base.PluginTypeDriver,
 		PluginApiVersions: []string{drivers.ApiVersion010},
-		PluginVersion:     version.Version,
+		PluginVersion:     "0.1",
 		Name:              pluginName,
 	}
 
 	// pluginConfigSpec is the hcl specification returned by the ConfigSchema RPC.
 	pluginConfigSpec = hclspec.NewObject(map[string]*hclspec.Spec{
-		"enabled": hclspec.NewAttr("enabled", "bool", false),
-		"cluster": hclspec.NewAttr("cluster", "string", false),
-		"region":  hclspec.NewAttr("region", "string", false),
+		"enabled":            hclspec.NewAttr("enabled", "bool", false),
+		"rayClusterEndpoint": hclspec.NewAttr("rayClusterEndpoint", "string", false),
 	})
 
 	// taskConfigSpec represents an ECS task configuration object.
 	// https://docs.aws.amazon.com/AmazonECS/latest/developerguide/scheduling_tasks.html
 	taskConfigSpec = hclspec.NewObject(map[string]*hclspec.Spec{
-		"task": hclspec.NewBlock("task", false, awsECSTaskConfigSpec),
+		"task": hclspec.NewBlock("task", false, rayRestTaskConfigSpec),
 	})
 
 	// awsECSTaskConfigSpec are the high level configuration options for
 	// configuring and ECS task.
-	awsECSTaskConfigSpec = hclspec.NewObject(map[string]*hclspec.Spec{
-		"launch_type":           hclspec.NewAttr("launch_type", "string", false),
-		"task_definition":       hclspec.NewAttr("task_definition", "string", false),
-		"network_configuration": hclspec.NewBlock("network_configuration", false, awsECSNetworkConfigSpec),
+	rayRestTaskConfigSpec = hclspec.NewObject(map[string]*hclspec.Spec{
+		"namespace":            hclspec.NewAttr("namespace", "string", false),
+		"ray_cluster_endpoint": hclspec.NewAttr("ray_cluster_endpoint", "string", false),
+		"actor":                hclspec.NewAttr("actor", "string", false),
+		"runner":               hclspec.NewAttr("runner", "string", false),
 	})
 
-	// awsECSNetworkConfigSpec is the network configuration for the task.
-	awsECSNetworkConfigSpec = hclspec.NewObject(map[string]*hclspec.Spec{
-		"aws_vpc_configuration": hclspec.NewBlock("aws_vpc_configuration", false, awsECSVPCConfigSpec),
-	})
+	// // awsECSNetworkConfigSpec is the network configuration for the task.
+	// awsECSNetworkConfigSpec = hclspec.NewObject(map[string]*hclspec.Spec{
+	// 	"aws_vpc_configuration": hclspec.NewBlock("aws_vpc_configuration", false, awsECSVPCConfigSpec),
+	// })
 
-	// awsECSVPCConfigSpec is the object representing the networking details
-	// for an ECS task or service.
-	awsECSVPCConfigSpec = hclspec.NewObject(map[string]*hclspec.Spec{
-		"assign_public_ip": hclspec.NewAttr("assign_public_ip", "string", false),
-		"security_groups":  hclspec.NewAttr("security_groups", "list(string)", false),
-		"subnets":          hclspec.NewAttr("subnets", "list(string)", false),
-	})
+	// // awsECSVPCConfigSpec is the object representing the networking details
+	// // for an ECS task or service.
+	// awsECSVPCConfigSpec = hclspec.NewObject(map[string]*hclspec.Spec{
+	// 	"assign_public_ip": hclspec.NewAttr("assign_public_ip", "string", false),
+	// 	"security_groups":  hclspec.NewAttr("security_groups", "list(string)", false),
+	// 	"subnets":          hclspec.NewAttr("subnets", "list(string)", false),
+	// })
 
 	// capabilities is returned by the Capabilities RPC and indicates what
 	// optional features this driver supports
@@ -113,36 +110,26 @@ type Driver struct {
 	// logger will log to the Nomad agent
 	logger hclog.Logger
 
-	// ecsClientInterface is the interface used for communicating with AWS ECS
-	client ecsClientInterface
+	// rayRestInterface is the interface used for communicating with AWS ECS
+	client rayRestInterface
 }
 
 // DriverConfig is the driver configuration set by the SetConfig RPC call
 type DriverConfig struct {
-	Enabled bool   `codec:"enabled"`
-	Cluster string `codec:"cluster"`
-	Region  string `codec:"region"`
+	Enabled            bool   `codec:"enabled"`
+	RayClusterEndpoint string `codec:"rayClusterEndpoint"`
 }
 
 // TaskConfig is the driver configuration of a task within a job
 type TaskConfig struct {
-	Task ECSTaskConfig `codec:"task"`
+	Task RayTaskConfig `codec:"task"`
 }
 
-type ECSTaskConfig struct {
-	LaunchType           string                   `codec:"launch_type"`
-	TaskDefinition       string                   `codec:"task_definition"`
-	NetworkConfiguration TaskNetworkConfiguration `codec:"network_configuration"`
-}
-
-type TaskNetworkConfiguration struct {
-	TaskAWSVPCConfiguration TaskAWSVPCConfiguration `codec:"aws_vpc_configuration"`
-}
-
-type TaskAWSVPCConfiguration struct {
-	AssignPublicIP string   `codec:"assign_public_ip"`
-	SecurityGroups []string `codec:"security_groups"`
-	Subnets        []string `codec:"subnets"`
+type RayTaskConfig struct {
+	Namespace          string `codec:"namespace"`
+	RayClusterEndpoint string `codec:"ray_cluster_endpoint"`
+	Actor              string `codec:"actor"`
+	Runner             string `coded:"runner"`
 }
 
 // TaskState is the state which is encoded in the handle returned in
@@ -151,7 +138,7 @@ type TaskAWSVPCConfiguration struct {
 type TaskState struct {
 	TaskConfig    *drivers.TaskConfig
 	ContainerName string
-	ARN           string
+	Actor         string
 	StartedAt     time.Time
 }
 
@@ -190,28 +177,18 @@ func (d *Driver) SetConfig(cfg *base.Config) error {
 		d.nomadConfig = cfg.AgentConfig.Driver
 	}
 
-	client, err := d.getAwsSdk(config.Cluster)
+	client, err := d.getRayConfig(config.RayClusterEndpoint)
 	if err != nil {
-		return fmt.Errorf("failed to get AWS SDK client: %v", err)
+		return fmt.Errorf("failed to get ray client: %v", err)
 	}
 	d.client = client
 
 	return nil
 }
 
-func (d *Driver) getAwsSdk(cluster string) (ecsClientInterface, error) {
-	awsCfg, err := external.LoadDefaultAWSConfig()
-	if err != nil {
-		return nil, fmt.Errorf("unable to load SDK config: %v", err)
-	}
-
-	if d.config.Region != "" {
-		awsCfg.Region = d.config.Region
-	}
-
-	return awsEcsClient{
-		cluster:   cluster,
-		ecsClient: ecs.New(awsCfg),
+func (d *Driver) getRayConfig(cluster string) (rayRestInterface, error) {
+	return rayRestClient{
+		rayClusterEndpoint: cluster,
 	}, nil
 }
 
@@ -278,30 +255,30 @@ func (d *Driver) buildFingerprint(ctx context.Context) *drivers.Fingerprint {
 }
 
 func (d *Driver) RecoverTask(handle *drivers.TaskHandle) error {
-	d.logger.Info("recovering ecs task", "version", handle.Version,
+	d.logger.Info("recovering Ray task", "version", handle.Version,
 		"task_config.id", handle.Config.ID, "task_state", handle.State,
 		"driver_state_bytes", len(handle.DriverState))
 	if handle == nil {
 		return fmt.Errorf("handle cannot be nil")
 	}
 
-	// If already attached to handle there's nothing to recover.
+	// If the task is already attached to handle, there's nothing to recover.
 	if _, ok := d.tasks.Get(handle.Config.ID); ok {
-		d.logger.Info("no ecs task to recover; task already exists",
+		d.logger.Info("no Ray task to recover; task already exists",
 			"task_id", handle.Config.ID,
 			"task_name", handle.Config.Name,
 		)
 		return nil
 	}
 
-	// Handle doesn't already exist, try to reattach
+	// The handle doesn't already exist, try to reattach
 	var taskState TaskState
 	if err := handle.GetDriverState(&taskState); err != nil {
 		d.logger.Error("failed to decode task state from handle", "error", err, "task_id", handle.Config.ID)
 		return fmt.Errorf("failed to decode task state from handle: %v", err)
 	}
 
-	d.logger.Info("ecs task recovered", "arn", taskState.ARN,
+	d.logger.Info("Ray task recovered", "actor", taskState.Actor,
 		"started_at", taskState.StartedAt)
 
 	h := newTaskHandle(d.logger, taskState, handle.Config, d.client)
@@ -326,22 +303,22 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		return nil, nil, fmt.Errorf("failed to decode driver config: %v", err)
 	}
 
-	d.logger.Info("starting ecs task", "driver_cfg", hclog.Fmt("%+v", driverConfig))
+	d.logger.Info("starting ray remote task", "driver_cfg", hclog.Fmt("%+v", driverConfig))
 	handle := drivers.NewTaskHandle(taskHandleVersion)
 	handle.Config = cfg
 
-	arn, err := d.client.RunTask(context.Background(), driverConfig)
+	actor, err := d.client.RunTask(context.Background(), driverConfig)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to start ECS task: %v", err)
+		return nil, nil, fmt.Errorf("failed to start ray task: %v", err)
 	}
 
 	driverState := TaskState{
 		TaskConfig: cfg,
 		StartedAt:  time.Now(),
-		ARN:        arn,
+		Actor:      actor,
 	}
 
-	d.logger.Info("ecs task started", "arn", driverState.ARN, "started_at", driverState.StartedAt)
+	d.logger.Info("ray task started", "actor", driverState.Actor, "started_at", driverState.StartedAt)
 
 	h := newTaskHandle(d.logger, driverState, cfg, d.client)
 
@@ -397,31 +374,30 @@ func (d *Driver) handleWait(ctx context.Context, handle *taskHandle, ch chan *dr
 }
 
 func (d *Driver) StopTask(taskID string, timeout time.Duration, signal string) error {
-	d.logger.Info("stopping ecs task", "task_id", taskID, "timeout", timeout, "signal", signal)
+	d.logger.Info("stopping remote task", "task_id", taskID, "timeout", timeout, "signal", signal)
 	handle, ok := d.tasks.Get(taskID)
 	if !ok {
 		return drivers.ErrTaskNotFound
 	}
 
-	// Detach is that's the signal, otherwise kill
+	// Detach if that's the signal, otherwise proceed to terminate
 	detach := signal == drivers.DetachSignal
 	handle.stop(detach)
 
-	// Wait for handle to finish
+	// Wait for the task handle to signal completion
 	select {
 	case <-handle.doneCh:
 	case <-time.After(timeout):
-		return fmt.Errorf("timed out waiting for ecs task (id=%s) to stop (detach=%t)",
+		return fmt.Errorf("timed out waiting for remote task (id=%s) to stop (detach=%t)",
 			taskID, detach)
 	}
 
-	d.logger.Info("ecs task stopped", "task_id", taskID, "timeout", timeout,
-		"signal", signal)
+	d.logger.Info("remote task stopped", "task_id", taskID, "timeout", timeout, "signal", signal)
 	return nil
 }
 
 func (d *Driver) DestroyTask(taskID string, force bool) error {
-	d.logger.Info("destroying ecs task", "task_id", taskID, "force", force)
+	d.logger.Info("destroying ray task", "task_id", taskID, "force", force)
 	handle, ok := d.tasks.Get(taskID)
 	if !ok {
 		return drivers.ErrTaskNotFound
@@ -435,7 +411,7 @@ func (d *Driver) DestroyTask(taskID string, force bool) error {
 	handle.stop(false)
 
 	d.tasks.Delete(taskID)
-	d.logger.Info("ecs task destroyed", "task_id", taskID, "force", force)
+	d.logger.Info("ray task destroyed", "task_id", taskID, "force", force)
 	return nil
 }
 
@@ -448,7 +424,7 @@ func (d *Driver) InspectTask(taskID string) (*drivers.TaskStatus, error) {
 }
 
 func (d *Driver) TaskStats(ctx context.Context, taskID string, interval time.Duration) (<-chan *structs.TaskResourceUsage, error) {
-	d.logger.Info("sending ecs task stats", "task_id", taskID)
+	d.logger.Info("sending ray task stats", "task_id", taskID)
 	_, ok := d.tasks.Get(taskID)
 	if !ok {
 		return nil, drivers.ErrTaskNotFound
@@ -457,7 +433,7 @@ func (d *Driver) TaskStats(ctx context.Context, taskID string, interval time.Dur
 	ch := make(chan *drivers.TaskResourceUsage)
 
 	go func() {
-		defer d.logger.Info("stopped sending ecs task stats", "task_id", taskID)
+		defer d.logger.Info("stopped sending ray task stats", "task_id", taskID)
 		defer close(ch)
 		for {
 			select {
@@ -491,9 +467,9 @@ func (d *Driver) TaskEvents(ctx context.Context) (<-chan *drivers.TaskEvent, err
 }
 
 func (d *Driver) SignalTask(_ string, _ string) error {
-	return fmt.Errorf("ECS driver does not support signals")
+	return fmt.Errorf("ray rest driver does not support signals")
 }
 
 func (d *Driver) ExecTask(_ string, _ []string, _ time.Duration) (*drivers.ExecTaskResult, error) {
-	return nil, fmt.Errorf("ECS driver does not support exec")
+	return nil, fmt.Errorf("ray rest driver does not support exec")
 }

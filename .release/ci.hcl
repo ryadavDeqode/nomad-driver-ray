@@ -3,7 +3,7 @@
 
 schema = "1"
 
-project "nomad-driver-ecs" {
+project "nomad-driver-ray" {
   // the team key is not used by CRT currently
   team = "nomad"
   slack {
@@ -11,7 +11,7 @@ project "nomad-driver-ecs" {
   }
   github {
     organization = "hashicorp"
-    repository   = "nomad-driver-ecs"
+    repository   = "nomad-driver-ray"
     release_branches = [
       "main",
     ]
@@ -27,7 +27,7 @@ event "build" {
   depends = ["merge"]
   action "build" {
     organization = "hashicorp"
-    repository   = "nomad-driver-ecs"
+    repository   = "nomad-driver-ray"
     workflow     = "build"
   }
 }
