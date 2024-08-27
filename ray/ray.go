@@ -1,7 +1,7 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
-package ecs
+package ray
 
 import (
 	"bytes"
@@ -214,7 +214,6 @@ func (c rayRestClient) RunTask(ctx context.Context, cfg TaskConfig) (string, err
 // 	// Return the actor name (assuming it's still provided in the config)
 // 	return cfg.Task.Actor, nil
 // }
-
 
 // // StopTask satisfies the ecs.rayRestInterface StopTask interface function.
 // func (c rayRestClient) StopTask(ctx context.Context, taskARN string) error {

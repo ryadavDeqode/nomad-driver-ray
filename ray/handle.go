@@ -1,7 +1,7 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
-package ecs
+package ray
 
 import (
 	"context"
@@ -24,8 +24,8 @@ import (
 // )
 
 type taskHandle struct {
-	actor     string
-	logger    hclog.Logger
+	actor            string
+	logger           hclog.Logger
 	rayRestInterface rayRestInterface
 
 	totalCpuStats  *stats.CpuStats
@@ -54,17 +54,17 @@ func newTaskHandle(logger hclog.Logger, ts TaskState, taskConfig *drivers.TaskCo
 	logger = logger.Named("handle").With("actor", ts.Actor)
 
 	h := &taskHandle{
-		actor:      ts.Actor,
-		rayRestInterface:  rayRestInterface,
-		taskConfig: taskConfig,
-		procState:  drivers.TaskStateRunning,
-		startedAt:  ts.StartedAt,
-		exitResult: &drivers.ExitResult{},
-		logger:     logger,
-		doneCh:     make(chan struct{}),
-		detach:     false,
-		ctx:        ctx,
-		cancel:     cancel,
+		actor:            ts.Actor,
+		rayRestInterface: rayRestInterface,
+		taskConfig:       taskConfig,
+		procState:        drivers.TaskStateRunning,
+		startedAt:        ts.StartedAt,
+		exitResult:       &drivers.ExitResult{},
+		logger:           logger,
+		doneCh:           make(chan struct{}),
+		detach:           false,
+		ctx:              ctx,
+		cancel:           cancel,
 	}
 
 	return h
