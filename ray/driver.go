@@ -6,16 +6,17 @@ package ray
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/go-hclog"
-	"github.com/ryadavDeqode/nomad-driver-ray/version"
 	"github.com/hashicorp/nomad/client/structs"
 	"github.com/hashicorp/nomad/drivers/shared/eventer"
 	"github.com/hashicorp/nomad/plugins/base"
 	"github.com/hashicorp/nomad/plugins/drivers"
 	"github.com/hashicorp/nomad/plugins/shared/hclspec"
 	pstructs "github.com/hashicorp/nomad/plugins/shared/structs"
+	"github.com/ryadavDeqode/nomad-driver-ray/version"
 )
 
 const (
@@ -31,6 +32,21 @@ const (
 	// migration of the task schema used by the plugin.
 	taskHandleVersion = 1
 )
+
+// TaskState is the state which is encoded in the handle returned in
+// StartTask. This information is needed to rebuild the task state and handler
+// during recovery.
+type TaskState struct {
+	TaskConfig    *drivers.TaskConfig
+	ContainerName string
+	Actor         string
+	StartedAt     time.Time
+}
+
+type GlobalTaskConfig struct {
+	DriverConfig *drivers.TaskConfig
+	TaskConfig   TaskConfig
+}
 
 var (
 	// pluginInfo is the response returned for the PluginInfo RPC.
@@ -58,6 +74,7 @@ var (
 	rayRestTaskConfigSpec = hclspec.NewObject(map[string]*hclspec.Spec{
 		"namespace":            hclspec.NewAttr("namespace", "string", false),
 		"ray_cluster_endpoint": hclspec.NewAttr("ray_cluster_endpoint", "string", false),
+		"ray_serve_endpoint":   hclspec.NewAttr("ray_serve_endpoint", "string", false),
 		"actor":                hclspec.NewAttr("actor", "string", false),
 		"runner":               hclspec.NewAttr("runner", "string", false),
 	})
@@ -83,6 +100,7 @@ var (
 		FSIsolation: drivers.FSIsolationImage,
 		RemoteTasks: true,
 	}
+	GlobalConfig GlobalTaskConfig
 )
 
 // Driver is a driver for running ECS containers
@@ -129,18 +147,9 @@ type TaskConfig struct {
 type RayTaskConfig struct {
 	Namespace          string `codec:"namespace"`
 	RayClusterEndpoint string `codec:"ray_cluster_endpoint"`
+	RayServeEndpoint   string `codec:"ray_serve_endpoint"`
 	Actor              string `codec:"actor"`
-	Runner             string `coded:"runner"`
-}
-
-// TaskState is the state which is encoded in the handle returned in
-// StartTask. This information is needed to rebuild the task state and handler
-// during recovery.
-type TaskState struct {
-	TaskConfig    *drivers.TaskConfig
-	ContainerName string
-	Actor         string
-	StartedAt     time.Time
+	Runner             string `codec:"runner"`
 }
 
 // NewECSDriver returns a new DriverPlugin implementation
@@ -307,6 +316,7 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 	d.logger.Info("starting ray remote task", "driver_cfg", hclog.Fmt("%+v", driverConfig))
 	handle := drivers.NewTaskHandle(taskHandleVersion)
 	handle.Config = cfg
+	driverConfig.Task.Actor = driverConfig.Task.Actor + "_" + strings.ReplaceAll(cfg.AllocID, "-", "")
 
 	actor, err := d.client.RunTask(context.Background(), driverConfig)
 	if err != nil {
@@ -330,7 +340,10 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 	}
 
 	d.tasks.Set(cfg.ID, h)
-
+	GlobalConfig = GlobalTaskConfig{
+		DriverConfig: cfg,
+		TaskConfig:   driverConfig,
+	}
 	go h.run()
 	return handle, nil, nil
 }

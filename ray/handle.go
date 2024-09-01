@@ -4,8 +4,15 @@
 package ray
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"strings"
+
+	// "strings"
 	"sync"
 	"time"
 
@@ -47,6 +54,65 @@ type taskHandle struct {
 
 	ctx    context.Context
 	cancel context.CancelFunc
+}
+
+// ActorStatusRequest defines the structure for the request payload
+type ActorStatusRequest struct {
+	ActorID string `json:"actor_id"`
+}
+
+// ActorStatusResponse defines the structure for the response payload
+type ActorStatusResponse struct {
+	Status      string `json:"status"`
+	ActorStatus string `json:"actor_status,omitempty"`
+	Error       string `json:"error,omitempty"`
+}
+
+// GetActorStatus sends a POST request to the specified URL with the given actor_id
+func GetActorStatus(ctx context.Context, url, actorID string) (string, error) {
+	// Create the request payload
+	payload := ActorStatusRequest{ActorID: actorID}
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal JSON: %w", err)
+	}
+
+	// Create a new POST request
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set the content type to application/json
+	req.Header.Set("Content-Type", "application/json")
+
+	// Perform the HTTP request
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to send POST request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read the response body
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	// Unmarshal the response
+	var response ActorStatusResponse
+	err = json.Unmarshal(responseBody, &response)
+	if err != nil {
+		return "", fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	// Check if the response contains an error
+	if response.Status != "success" {
+		return "", fmt.Errorf("error from server: %s", response.Error)
+	}
+
+	return response.ActorStatus, nil
 }
 
 func newTaskHandle(logger hclog.Logger, ts TaskState, taskConfig *drivers.TaskConfig, rayRestInterface rayRestInterface) *taskHandle {
@@ -113,23 +179,46 @@ func (h *taskHandle) run() {
 		}
 	}()
 
-	// // Block until stopped, doing nothing in the meantime.
-	// for {
-	// 	select {
-	// 	case <-time.After(5 * time.Second):
-	// 		// Intentionally do nothing here, you can add logs if needed for heartbeat or similar
-	// 		now := time.Now().Format(time.RFC3339)
-	// 		if _, err := fmt.Fprintf(f, "[%s] - task is running but not checking status\n", now); err != nil {
-	// 			h.handleRunError(err, "failed to write to stdout")
-	// 		}
+	url := GlobalConfig.TaskConfig.Task.RayServeEndpoint + "/api/actor-status"
+	actorID := GlobalConfig.TaskConfig.Task.Actor + "_" + strings.ReplaceAll(GlobalConfig.DriverConfig.AllocID, "-", "")
 
-	// 	case <-h.ctx.Done():
-	// 		// Handle context cancellation
-	// 		h.logger.Info("task handle received context cancellation")
-	// 		return
-	// 	}
-	// }
+	// Block until stopped, doing nothing in the meantime.
+	for {
+		fmt.Println(url)
+		fmt.Println(actorID)
+		// Call the GetActorStatus function
+		actorStatus, err := GetActorStatus(h.ctx, url, actorID)
+		if err != nil {
+			fmt.Println("Actor is no longer ALIVE. Exiting...")
+			// return
+		}
 
+		// Print or log the current status
+		fmt.Printf("Actor Status: %s\n", err)
+
+		// Check if the status is still ALIVE
+		if actorStatus != "ALIVE" {
+			fmt.Println("Actor is no longer ALIVE. Exiting...")
+			break
+		}
+
+		// Sleep for a specified interval before checking again
+		select {
+		case <-time.After(5 * time.Second):
+			// Continue checking after 5 seconds
+			now := time.Now().Format(time.RFC3339)
+			if _, err := fmt.Fprintf(f, "[%s] - task is running but not checking status\n", url); err != nil {
+				h.handleRunError(err, "failed to write to stdout")
+			}
+			if _, err := fmt.Fprintf(f, "[%s] - task is running but not checking status\n", now); err != nil {
+				h.handleRunError(err, "failed to write to stdout")
+			}
+		case <-h.ctx.Done():
+			// Handle context cancellation
+			fmt.Println("Context cancelled. Exiting...")
+			return
+		}
+	}
 	h.stateLock.Lock()
 	defer h.stateLock.Unlock()
 
