@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 
 	// "strings"
 	"sync"
@@ -180,7 +179,7 @@ func (h *taskHandle) run() {
 	}()
 
 	url := GlobalConfig.TaskConfig.Task.RayServeEndpoint + "/api/actor-status"
-	actorID := GlobalConfig.TaskConfig.Task.Actor + "_" + strings.ReplaceAll(GlobalConfig.DriverConfig.AllocID, "-", "")
+	actorID := GlobalConfig.TaskConfig.Task.Actor
 
 	// Block until stopped, doing nothing in the meantime.
 	for {
@@ -199,7 +198,7 @@ func (h *taskHandle) run() {
 		// Check if the status is still ALIVE
 		if actorStatus != "ALIVE" {
 			fmt.Println("Actor is no longer ALIVE. Exiting...")
-			break
+			// break
 		}
 
 		// Sleep for a specified interval before checking again
@@ -207,10 +206,16 @@ func (h *taskHandle) run() {
 		case <-time.After(5 * time.Second):
 			// Continue checking after 5 seconds
 			now := time.Now().Format(time.RFC3339)
-			if _, err := fmt.Fprintf(f, "[%s] - task is running but not checking status\n", url); err != nil {
+			if _, err := fmt.Fprintf(f, "[%s] - url\n", url); err != nil {
 				h.handleRunError(err, "failed to write to stdout")
 			}
-			if _, err := fmt.Fprintf(f, "[%s] - task is running but not checking status\n", now); err != nil {
+			if _, err := fmt.Fprintf(f, "[%s] - timestamp\n", now); err != nil {
+				h.handleRunError(err, "failed to write to stdout")
+			}
+			if _, err := fmt.Fprintf(f, "[%s] - actorStatus\n", actorStatus); err != nil {
+				h.handleRunError(err, "failed to write to stdout")
+			}
+			if _, err := fmt.Fprintf(f, "[%s] - actorId\n", actorID); err != nil {
 				h.handleRunError(err, "failed to write to stdout")
 			}
 		case <-h.ctx.Done():
